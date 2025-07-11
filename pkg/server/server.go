@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -17,11 +18,23 @@ type Client struct {
 }
 
 const addr = "localhost:5555"
-
+const (
+	defaultSyncDir = "../sync"
+	envSyncDir     = "SYNCTO"
+)
 var upgrader = websocket.Upgrader{}
 var wg sync.WaitGroup
 
+// getSyncFolder checks if $SYNCTO is set, if so it returns the value of $SYNCTO else it returns the fallback path (""../sync")
+func getSyncFolder() string {
+	if val, ok := os.LookupEnv(envSyncDir); ok && val != "" {
+		return val
+	}
+	return defaultSyncDir
+}
 func handleMessage(w http.ResponseWriter, r *http.Request) {
+	syncDirectory := getSyncFolder()
+	log.Printf("Synchronizing files to %s", syncDirectory)
 	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
 	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -55,8 +68,10 @@ func handleMessage(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch request.RequestType {
-		case string(common.Echo):
-			go HandleEcho(msg, &client)
+			case string(common.Echo):
+				go HandleEcho(msg, &client)
+			case string(common.Sync):
+				go HandleSync(msg, &client, syncDirectory)
 		}
 	}
 }

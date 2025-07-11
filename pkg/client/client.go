@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"log"
 
+	"path/filepath"
+
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"slai.io/takehome/pkg/common"
+	"slai.io/takehome/pkg/fileutils"
 )
 
 const maxConnectionAttempts = 100
@@ -143,6 +146,55 @@ func (r *Client) Echo(value string) (string, error) {
 	err = json.Unmarshal(msg, &response)
 	if err != nil {
 		log.Println("Unable to handle echo response: ", err)
+		return "", err
+	}
+
+	return response.Value, err
+}
+
+func (r *Client) Sync(fileop common.FileOperation) (string, error) {
+	requestId := uuid.NewString()
+	// define value based on what the file op is
+	var value string
+	switch fileop.OpType {
+		case common.CREATE, common.UPDATE: {
+			//read file to memory and assign to value
+			v, err := fileutils.FileSerializer(filepath.Join(r.Directory, fileop.FileName))
+			if err != nil {
+				return "", err
+			}
+			value = v
+		}
+		case common.DELETE:
+			value = ""
+	}
+	var request *common.SyncRequest = &common.SyncRequest{
+		BaseRequest: common.BaseRequest{
+			RequestId: requestId,
+			RequestType: string(common.Sync),
+		},
+		FileOp: fileop,
+		Value: value,
+	}
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return "", err
+	}
+
+	r.channels[requestId] = make(chan []byte)
+
+	err = r.tx(payload)
+	if err != nil {
+		return "", err
+	}
+
+	var response common.SyncResponse = common.SyncResponse{}
+
+	msg := <-r.channels[requestId]
+	err = json.Unmarshal(msg, &response)
+	if err != nil {
+		log.Println("Unable to handle SYNC response: ", err)
 		return "", err
 	}
 
